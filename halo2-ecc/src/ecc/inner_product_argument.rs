@@ -2,16 +2,148 @@ use crate::bigint::{CRTInteger, ProperCrtUint};
 use crate::fields::fp::Reduced;
 use crate::fields::{fp::FpChip, FieldChip, PrimeField};
 use halo2_base::{utils::CurveAffineExt, AssignedValue, Context};
+use merlin::Transcript; // todo: install
+use transcript::TranscriptProtocol;
 
 use super::{multi_scalar_multiply, EcPoint, EccChip};
+
+pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
+    chip: &EccChip<F, FpChip<F, CF>>,
+    ctx: &mut Context<F>,
+    Q: EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>,
+    mut G: Vec<EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>>,
+    mut H: Vec<EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>>,
+    mut a_vec: Vec<Scalar>,
+    mut b_vec: Vec<Scalar>,
+    transcript: &mut Transcript,
+    var_window_bits: usize,
+) where
+    GA: CurveAffineExt<Base = CF, ScalarExt = SF>,
+{
+    // get FpChip for SF
+    let base_chip = chip.field_chip;
+    let scalar_chip =
+        FpChip::<F, SF>::new(base_chip.range, base_chip.limb_bits, base_chip.num_limbs);
+
+    // validate vector length
+    let n = G.len();
+    assert_eq!(n, H.len());
+    assert_eq!(n, a_vec.len());
+    assert_eq!(n, b_vec.len());
+    assert_eq!(n, 1 << k); // does the power of 2 check
+
+    transcript.innerproduct_domain_sep(n as u64);
+
+    // Create slices G, H, a, b backed by their respective
+    // vectors.  This lets us reslice as we compress the lengths
+    // of the vectors in the main loop below.
+    let mut G_slice = &mut G[..];
+    let mut H_slice = &mut H[..];
+    let mut a = &mut a[..];
+    let mut b = &mut b[..];
+
+    // Init L and R vectors to store the halves
+    let lg_n = n.next_power_of_two().trailing_zeros() as usize; // 4 is the next power of two of 3
+    let mut L_vec = Vec::with_capacity(lg_n);
+    let mut R_vec = Vec::with_capacity(lg_n);
+
+    // If it's the first iteration, unroll the Hprime = H*y_inv scalar mults
+    // into multiscalar muls, for performance.
+
+    if n != 1 {
+        n = n / 2;
+        let (a_L, a_R) = a.split_at_mut(n);
+        let (b_L, b_R) = b.split_at_mut(n);
+        let (G_L, G_R) = G_slice.split_at_mut(n);
+        let (H_L, H_R) = H_slice.split_at_mut(n);
+
+        // todo: fix
+        let c_L = inner_product(&a_L, &b_R);
+        let c_R = inner_product(&a_R, &b_L);
+
+        let L = multi_scalar_multiply::<_, _, GA>(
+            base_chip,
+            ctx,
+            &(G_R.iter().chain(H_L.iter()).chain(iter::once(&Q)).cloned().collect::<Vec<_>>()), // P
+            a_L.iter()
+                .chain(b_R.iter())
+                .chain(iter::once(&c_L))
+                .map(|x| x.limbs().to_vec())
+                .collect(), // scalar
+            base_chip.limb_bits, // max bits
+            var_window_bits,     // window bits
+        );
+
+        let R = multi_scalar_multiply::<_, _, GA>(
+            base_chip,
+            ctx,
+            &(G_L.iter().chain(H_R.iter()).chain(iter::once(&Q)).cloned().collect::<Vec<_>>()), // P
+            a_R.iter()
+                .chain(b_L.iter())
+                .chain(iter::once(&c_R))
+                .map(|x| x.limbs().to_vec())
+                .collect(), // scalar
+            base_chip.limb_bits, // max bits
+            var_window_bits,     // window bits
+        );
+
+        L_vec.push(L);
+        R_vec.push(R);
+
+        transcript.append_point(b"L", &L);
+        transcript.append_point(b"R", &R);
+
+        let u = transcript.challenge_scalar(b"u");
+        let u_inv = u.invert();
+        
+        for i in 0..n {
+            a_L[i] = a_L[i] * u[i] + u_inv[i] * a_R[i];
+            b_L[i] = b_L[i] * u_inv + u * b_R[i];
+
+            G_L[i] = multi_scalar_multiply::<_, _, GA>(
+                base_chip,
+                ctx,
+                &[G_L[i], G_R[i]], // P
+                &[u_inv, u], // scalar
+                base_chip.limb_bits, // max bits
+                var_window_bits,     // window bits
+            );
+
+
+            H_L[i] = multi_scalar_multiply::<_, _, GA>(
+                base_chip,
+                ctx,
+                &[H_L[i], H_R[i]], // P
+                &[u_inv, u], // scalar
+                base_chip.limb_bits, // max bits
+                var_window_bits,     // window bits
+            );
+        }
+
+        a = a_L;
+        b = b_L;
+        G_slice = G_L;
+        H_slice = H_L;
+
+    }
+
+    // todo: implement while loop
+    // todo: return
+
+}
 
 /// Computes three vectors of verification scalars \\([u\_{i}^{2}]\\), \\([u\_{i}^{-2}]\\) and \\([s\_{i}]\\) for combined multiscalar multiplication
 /// u_{i} is provided as input, assume is checked to be in [0, n - 1]
 /// returns (u_{i}^{2}, u_{i}^{-2}, s_{i}) with size k, k, 2^k
+///
+/// todo: desc: takes in a vector of u_is
+/// todo: q: what are the field stuff
 pub fn verification_scalars<'range, F: PrimeField, SF: PrimeField>(
     ctx: &mut Context<F>,
+    // todo: desc: in the bulletproofs impl, the u vec is stored in self
     u: Vec<Reduced<ProperCrtUint<F>, SF>>, // size = k, u_i < n, randomness generated by fiat-shamir transform
     scalar_chip: &FpChip<'range, F, SF>,
+    // todo: desc: uses ProperCrtUint<F> instead of Scalar like the bulletproof impl
 ) -> (Vec<ProperCrtUint<F>>, Vec<ProperCrtUint<F>>, Vec<ProperCrtUint<F>>) {
     let lg_n = u.len();
     let u_pow_two: Vec<_> = u
@@ -131,4 +263,21 @@ where
     let is_valid_proof = chip.is_equal(ctx, P_prime, P);
 
     is_valid_proof
+}
+
+// todo: maybe delete
+/// Computes an inner product of two vectors
+/// \\[
+///    {\langle {\mathbf{a}}, {\mathbf{b}} \rangle} = \sum\_{i=0}^{n-1} a\_i \cdot b\_i.
+/// \\]
+/// Panics if the lengths of \\(\mathbf{a}\\) and \\(\mathbf{b}\\) are not equal.
+pub fn inner_product(a: &[Scalar], b: &[Scalar]) -> Scalar {
+    let mut out = Scalar::zero();
+    if a.len() != b.len() {
+        panic!("inner_product(a,b): lengths of vectors do not match");
+    }
+    for i in 0..a.len() {
+        out += a[i] * b[i];
+    }
+    out
 }
