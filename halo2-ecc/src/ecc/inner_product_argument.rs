@@ -2,8 +2,6 @@ use crate::bigint::{CRTInteger, ProperCrtUint};
 use crate::fields::fp::Reduced;
 use crate::fields::{fp::FpChip, FieldChip, PrimeField};
 use halo2_base::{utils::CurveAffineExt, AssignedValue, Context};
-use merlin::Transcript; // todo: install
-use transcript::TranscriptProtocol;
 
 use super::{multi_scalar_multiply, EcPoint, EccChip};
 
@@ -13,9 +11,10 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
     Q: EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>,
     mut G: Vec<EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>>,
     mut H: Vec<EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>>,
-    mut a_vec: Vec<Scalar>,
-    mut b_vec: Vec<Scalar>,
-    transcript: &mut Transcript,
+    mut a_vec: Vec<ProperCrtUint<F>>,
+    mut b_vec: Vec<ProperCrtUint<F>>,
+    u: Vec<ProperCrtUint<F>>, // todo: get rid of this
+    // transcript: &mut Transcript, // todo: implement our own ver of merlin transcript
     var_window_bits: usize,
 ) where
     GA: CurveAffineExt<Base = CF, ScalarExt = SF>,
@@ -32,7 +31,7 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
     assert_eq!(n, b_vec.len());
     assert_eq!(n, 1 << k); // does the power of 2 check
 
-    transcript.innerproduct_domain_sep(n as u64);
+    // transcript.innerproduct_domain_sep(n as u64);
 
     // Create slices G, H, a, b backed by their respective
     // vectors.  This lets us reslice as we compress the lengths
@@ -49,7 +48,7 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
 
     // If it's the first iteration, unroll the Hprime = H*y_inv scalar mults
     // into multiscalar muls, for performance.
-
+    // todo: actually implement this part ^
     if n != 1 {
         n = n / 2;
         let (a_L, a_R) = a.split_at_mut(n);
@@ -90,15 +89,27 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
         L_vec.push(L);
         R_vec.push(R);
 
-        transcript.append_point(b"L", &L);
-        transcript.append_point(b"R", &R);
+        // transcript.append_point(b"L", &L);
+        // transcript.append_point(b"R", &R);
 
-        let u = transcript.challenge_scalar(b"u");
-        let u_inv = u.invert();
+        // let u = transcript.challenge_scalar(b"u");
+
+        let u_valid: Vec<Reduced<ProperCrtUint<F>, SF>> =
+        u.iter().map(|u_i| scalar_chip.enforce_less_than(ctx, (*u_i).clone())).collect();
+
+        let SF_ONE = scalar_chip.load_constant(ctx, SF::one());
+
+        let u_inv: Vec<_> = u_valid
+            .iter()
+            .map(|u_i| scalar_chip.divide(ctx, SF_ONE.clone(), ProperCrtUint::from((*u_i).clone())))
+            .collect();
+
+        // let u_inv = u.invert();
         
+        // todo: write this in halo2-base lmao. 
         for i in 0..n {
-            a_L[i] = a_L[i] * u[i] + u_inv[i] * a_R[i];
-            b_L[i] = b_L[i] * u_inv + u * b_R[i];
+            a_L[i] = scalar_chip.add(ctx, scalar_chip.mul(ctx, a_L[i].clone(), u_valid[i].clone()), scalar_chip.mul(ctx, u_inv[i].clone(), a_R[i].clone()));
+            b_L[i] = scalar_chip.add(ctx, scalar_chip.mul(ctx, b_L[i].clone(), u_inv[i].clone()), scalar_chip.mul(ctx, u_valid[i].clone(), b_R[i].clone()));
 
             G_L[i] = multi_scalar_multiply::<_, _, GA>(
                 base_chip,
@@ -128,6 +139,7 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
     }
 
     // todo: implement while loop
+    // - differences: g_factor and h_factor array + diff in the ristretto points
     // todo: return
 
 }
@@ -158,10 +170,14 @@ pub fn verification_scalars<'range, F: PrimeField, SF: PrimeField>(
         .collect();
 
     let SF_ONE = scalar_chip.load_constant(ctx, SF::one());
+
+    // 1
     let u_invert: Vec<_> = u
         .iter()
         .map(|u_i| scalar_chip.divide(ctx, SF_ONE.clone(), ProperCrtUint::from((*u_i).clone())))
         .collect();
+
+    // 3
     let u_inv_pow_two: Vec<_> = u_invert
         .iter()
         .map(|u_i| {
@@ -169,7 +185,7 @@ pub fn verification_scalars<'range, F: PrimeField, SF: PrimeField>(
         })
         .collect();
 
-    // Compute 1/(u_k...u_1)
+    // 2. Compute 1/(u_k...u_1)
     let allinv =
         u_invert.iter().fold(SF_ONE.clone(), |acc, x| scalar_chip.mul(ctx, acc, (*x).clone()));
     // compute s
@@ -265,19 +281,18 @@ where
     is_valid_proof
 }
 
-// todo: maybe delete
 /// Computes an inner product of two vectors
 /// \\[
 ///    {\langle {\mathbf{a}}, {\mathbf{b}} \rangle} = \sum\_{i=0}^{n-1} a\_i \cdot b\_i.
 /// \\]
 /// Panics if the lengths of \\(\mathbf{a}\\) and \\(\mathbf{b}\\) are not equal.
-pub fn inner_product(a: &[Scalar], b: &[Scalar]) -> Scalar {
-    let mut out = Scalar::zero();
-    if a.len() != b.len() {
-        panic!("inner_product(a,b): lengths of vectors do not match");
-    }
-    for i in 0..a.len() {
-        out += a[i] * b[i];
-    }
-    out
-}
+// pub fn inner_product(a: &[Scalar], b: &[Scalar]) -> Scalar {
+//     let mut out = Scalar::zero();
+//     if a.len() != b.len() {
+//         panic!("inner_product(a,b): lengths of vectors do not match");
+//     }
+//     for i in 0..a.len() {
+//         out += a[i] * b[i];
+//     }
+//     out
+// }
