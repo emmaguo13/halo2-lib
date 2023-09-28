@@ -5,10 +5,27 @@ use halo2_base::{utils::CurveAffineExt, AssignedValue, Context};
 
 use super::{multi_scalar_multiply, EcPoint, EccChip};
 
+fn inner_product<'range, F: PrimeField, SF: PrimeField>(ctx: &mut Context<F>, scalar_chip: &FpChip<'range, F, SF>, a: Vec<Reduced<ProperCrtUint<F>, SF>>, b: Vec<Reduced<ProperCrtUint<F>, SF>>) -> Vec<Reduced<ProperCrtUint<F>, SF>> {
+    assert_eq!(a.len(), b.len());
+
+    let a_b = a
+        .iter()
+        .zip(b.iter())
+        .map(|(a_i, b_i)| {
+            scalar_chip.mul(
+                ctx,
+                CRTInteger::from(ProperCrtUint::from((*a_i).clone())),
+                CRTInteger::from(ProperCrtUint::from((*b_i).clone())),
+            )
+        }).fold(CRTInteger::zero(), |acc, x| scalar_chip.add_no_carry(ctx, CRTInteger::from(ProperCrtUint::from((*acc).clone())), CRTInteger::from(ProperCrtUint::from((*x).clone()))));
+    
+    a_b
+}
+
 pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
     chip: &EccChip<F, FpChip<F, CF>>,
     ctx: &mut Context<F>,
-    Q: EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>,
+    Q: EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>, // EC point
     mut G: Vec<EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>>,
     mut H: Vec<EcPoint<F, <FpChip<F, CF> as FieldChip<F>>::FieldPoint>>,
     mut a_vec: Vec<ProperCrtUint<F>>,
@@ -26,20 +43,19 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
 
     // validate vector length
     let n = G.len();
+    let k = G.len().ilog2();
     assert_eq!(n, H.len());
     assert_eq!(n, a_vec.len());
     assert_eq!(n, b_vec.len());
     assert_eq!(n, 1 << k); // does the power of 2 check
 
-    // transcript.innerproduct_domain_sep(n as u64);
-
-    // Create slices G, H, a, b backed by their respective
-    // vectors.  This lets us reslice as we compress the lengths
-    // of the vectors in the main loop below.
-    let mut G_slice = &mut G[..];
-    let mut H_slice = &mut H[..];
-    let mut a = &mut a[..];
-    let mut b = &mut b[..];
+    // validate u, a, b < n
+    let u_valid: Vec<Reduced<ProperCrtUint<F>, SF>> =
+        u.iter().map(|u_i| scalar_chip.enforce_less_than(ctx, (*u_i).clone())).collect();
+    let a_valid: Vec<Reduced<ProperCrtUint<F>, SF>> =
+        a_vec.iter().map(|a_i| scalar_chip.enforce_less_than(ctx, (*a_i).clone())).collect();
+    let b_valid: Vec<Reduced<ProperCrtUint<F>, SF>> =
+        b_vec.iter().map(|b_i| scalar_chip.enforce_less_than(ctx, (*b_i).clone())).collect();
 
     // Init L and R vectors to store the halves
     let lg_n = n.next_power_of_two().trailing_zeros() as usize; // 4 is the next power of two of 3
@@ -51,22 +67,22 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
     // todo: actually implement this part ^
     if n != 1 {
         n = n / 2;
-        let (a_L, a_R) = a.split_at_mut(n);
-        let (b_L, b_R) = b.split_at_mut(n);
-        let (G_L, G_R) = G_slice.split_at_mut(n);
-        let (H_L, H_R) = H_slice.split_at_mut(n);
+        let (a_L, a_R) = a_valid.split_at_mut(n);
+        let (b_L, b_R) = b_valid.split_at_mut(n);
+        let (G_L, G_R) = G.split_at_mut(n);
+        let (H_L, H_R) = H.split_at_mut(n);
 
         // todo: fix
-        let c_L = inner_product(&a_L, &b_R);
-        let c_R = inner_product(&a_R, &b_L);
+        let c_L = inner_product(ctx, &scalar_chip, a_L, b_R);
+        let c_R = inner_product(ctx, &scalar_chip, a_R, b_L);
 
         let L = multi_scalar_multiply::<_, _, GA>(
             base_chip,
             ctx,
-            &(G_R.iter().chain(H_L.iter()).chain(iter::once(&Q)).cloned().collect::<Vec<_>>()), // P
+            &(G_R.iter().chain(H_L.iter()).chain(std::iter::once(&Q)).cloned().collect::<Vec<_>>()), // P
             a_L.iter()
                 .chain(b_R.iter())
-                .chain(iter::once(&c_L))
+                .chain(std::iter::once(&c_L))
                 .map(|x| x.limbs().to_vec())
                 .collect(), // scalar
             base_chip.limb_bits, // max bits
@@ -76,10 +92,10 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
         let R = multi_scalar_multiply::<_, _, GA>(
             base_chip,
             ctx,
-            &(G_L.iter().chain(H_R.iter()).chain(iter::once(&Q)).cloned().collect::<Vec<_>>()), // P
+            &(G_L.iter().chain(H_R.iter()).chain(std::iter::once(&Q)).cloned().collect::<Vec<_>>()), // P
             a_R.iter()
                 .chain(b_L.iter())
-                .chain(iter::once(&c_R))
+                .chain(std::iter::once(&c_R))
                 .map(|x| x.limbs().to_vec())
                 .collect(), // scalar
             base_chip.limb_bits, // max bits
@@ -106,10 +122,9 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
 
         // let u_inv = u.invert();
         
-        // todo: write this in halo2-base lmao. 
         for i in 0..n {
-            a_L[i] = scalar_chip.add(ctx, scalar_chip.mul(ctx, a_L[i].clone(), u_valid[i].clone()), scalar_chip.mul(ctx, u_inv[i].clone(), a_R[i].clone()));
-            b_L[i] = scalar_chip.add(ctx, scalar_chip.mul(ctx, b_L[i].clone(), u_inv[i].clone()), scalar_chip.mul(ctx, u_valid[i].clone(), b_R[i].clone()));
+            a_L[i] = scalar_chip.add_no_carry(ctx, scalar_chip.mul(ctx, a_L[i].clone(), u_valid[i].clone()), scalar_chip.mul(ctx, u_inv[i].clone(), a_R[i].clone()));
+            b_L[i] = scalar_chip.add_no_carry(ctx, scalar_chip.mul(ctx, b_L[i].clone(), u_inv[i].clone()), scalar_chip.mul(ctx, u_valid[i].clone(), b_R[i].clone()));
 
             G_L[i] = multi_scalar_multiply::<_, _, GA>(
                 base_chip,
@@ -131,10 +146,10 @@ pub fn create_proof<F: PrimeField, CF: PrimeField, SF: PrimeField, GA>(
             );
         }
 
-        a = a_L;
-        b = b_L;
-        G_slice = G_L;
-        H_slice = H_L;
+        a_valid = a_L;
+        b_valid = b_L;
+        G = G_L;
+        H = H_L;
 
     }
 
@@ -280,19 +295,3 @@ where
 
     is_valid_proof
 }
-
-/// Computes an inner product of two vectors
-/// \\[
-///    {\langle {\mathbf{a}}, {\mathbf{b}} \rangle} = \sum\_{i=0}^{n-1} a\_i \cdot b\_i.
-/// \\]
-/// Panics if the lengths of \\(\mathbf{a}\\) and \\(\mathbf{b}\\) are not equal.
-// pub fn inner_product(a: &[Scalar], b: &[Scalar]) -> Scalar {
-//     let mut out = Scalar::zero();
-//     if a.len() != b.len() {
-//         panic!("inner_product(a,b): lengths of vectors do not match");
-//     }
-//     for i in 0..a.len() {
-//         out += a[i] * b[i];
-//     }
-//     out
-// }
