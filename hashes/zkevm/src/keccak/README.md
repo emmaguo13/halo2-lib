@@ -10,7 +10,7 @@ The major differences is that this version directly represent raw inputs and Kec
 
 Logically the circuit takes an array of bytes as inputs and Keccak results of these bytes as outputs.
 
-`keccak::vanilla::witness::multi_keccak` generates the witnesses of the ciruit for a given input.
+`keccak::vanilla::witness::multi_keccak` generates the witnesses of the circuit for a given input.
 
 ### Background Knowledge
 
@@ -81,7 +81,7 @@ Keccak component circuits and utilities based on halo2-lib.
 
 ### Motivation
 
-Move expensive Keccak computation into standalone circuits(**Component Circuits**) and circuits with actual business logic(**App Circuits**) can read Keccak results from component circuits. Then we achieve better scalability - the maximum size of a single circuit could be managed and component/app circuits could be proved in paralle.
+Move expensive Keccak computation into standalone circuits(**Component Circuits**) and circuits with actual business logic(**App Circuits**) can read Keccak results from component circuits. Then we achieve better scalability - the maximum size of a single circuit could be managed and component/app circuits could be proved in parallel.
 
 ### Output
 

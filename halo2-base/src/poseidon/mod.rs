@@ -8,6 +8,8 @@ use crate::{
 
 use itertools::Itertools;
 
+pub mod transcripts;
+
 /// Module for Poseidon hasher
 pub mod hasher;
 

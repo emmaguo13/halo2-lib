@@ -279,6 +279,7 @@ impl<F: ScalarField, const T: usize, const RATE: usize> PoseidonHasher<F, T, RAT
     }
 }
 
+// TODO: use this????
 /// Poseidon sponge. This is stateful.
 pub struct PoseidonSponge<F: ScalarField, const T: usize, const RATE: usize> {
     init_state: PoseidonState<F, T, RATE>,
