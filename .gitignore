@@ -23,3 +23,5 @@ Cargo.lock
 /halo2_ecc/params/
 /halo2_ecc/results/
 /halo2_base/params/
+
+*.DS_Store
