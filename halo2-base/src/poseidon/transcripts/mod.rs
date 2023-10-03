@@ -55,22 +55,22 @@ impl<F: ScalarField, const T: usize, const RATE: usize> PoseidonTranscriptChip<F
 
 pub trait PoseidonTranscriptInstructions<F: ScalarField> {
     fn absorb_field_element(
-        &self,
+        &mut self,
         ctx: &mut Context<F>,
         elements: &[AssignedValue<F>],
-    ) -> AssignedValue<F>
+    )
     where
         F: BigPrimeField;
 }
 
-impl<'a, F: ScalarField, const T: usize, const RATE: usize> PoseidonTranscriptInstructions<F>
-    for PoseidonTranscriptChip<'a, F, T, RATE>
+impl<F: ScalarField, const T: usize, const RATE: usize> PoseidonTranscriptInstructions<F>
+    for PoseidonTranscriptChip<F, T, RATE>
 {
     fn absorb_field_element(
-        &self,
+        &mut self,
         ctx: &mut Context<F>,
         elements: &[AssignedValue<F>], // vector of scalar field elements
-    ) -> AssignedValue<F>
+    ) 
     where
         F: BigPrimeField, 
     {
@@ -83,15 +83,15 @@ impl<'a, F: ScalarField, const T: usize, const RATE: usize> PoseidonTranscriptIn
     //     gate: &impl GateInstructions<F>,
     // ) -> AssignedValue<F> {
 
-    fn squeeze_field_element(
-        &self,
-        ctx: &mut Context<F>,
-    ) -> AssignedValue<F>
-    where
-        F: BigPrimeField, 
-    {
-        self.transcript.update(elements);
-    }
+    // fn squeeze_field_element(
+    //     &self,
+    //     ctx: &mut Context<F>,
+    // ) -> AssignedValue<F>
+    // where
+    //     F: BigPrimeField, 
+    // {
+    //     self.transcript.update(elements);
+    // }
 
 }
 
