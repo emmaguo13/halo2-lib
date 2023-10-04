@@ -7,11 +7,11 @@ use halo2_base::{
     QuantumCell::{Constant, Existing, Witness, WitnessFraction},
 };
 
-use crate::halo2_proofs::{
+use crate::{halo2_proofs::{
     arithmetic::CurveAffine,
     halo2curves::bn256::Fr,
     halo2curves::secp256k1::{Fp, Fq, Secp256k1Affine},
-};
+}, bigint};
 
 use crate::bigint::{CRTInteger, ProperCrtUint};
 use crate::fields::{fp::FpChip, FieldChip};
@@ -21,37 +21,43 @@ use std::fs::File;
 
 // TODO: figure out the field stuff, ask sen the question!
 
-pub struct UniPoly<F: BigPrimeField, SF: BigPrimeField> {
+pub struct UniPoly<'a, F: BigPrimeField, SF: BigPrimeField> {
     coeffs: Vec<ProperCrtUint<F>>,
-    scalar_chip: &FpChip<F, SF>
+    scalar_chip: &'a FpChip<'a, F, SF>
 }
 
 // TODO: new function and make sure the field things are correct
-impl<F: BigPrimeField, SF: BigPrimeField> UniPoly<F, SF> {
+impl<'a, F: BigPrimeField, SF: BigPrimeField> UniPoly<'a, F, SF> {
     pub fn new(
         // ctx: &mut Context<F>,
-        &self,
         coeffs: Vec<ProperCrtUint<F>>,
-        scalar_chip:&FpChip<F, SF>
-    ) {
-        self.coeffs = coeffs; 
-        self.scalar_chip = scalar_chip;
+        scalar_chip:&'a FpChip<'a, F, SF>
+    ) -> Self {
+        Self {coeffs, scalar_chip}
     }
-    pub fn eval_at_one(&self, ctx: &mut Context<F>) -> AssignedValue<F> {
-        let sf_zero = scalar_chip.load_constant(ctx, SF::ZERO);
-        let eval_sum = self.coeffs.iter().fold(sf_zero.clone(), |acc, x| scalar_chip.add_no_carry(ctx, acc, (*x).clone()));
+    pub fn eval_at_one(&self, ctx: &mut Context<F>) -> ProperCrtUint<F> {
+        let sf_zero = self.scalar_chip.load_constant(ctx, SF::ZERO);
+        let eval_sum = self.coeffs.iter().fold(sf_zero.clone(), |acc, x| bigint::ProperCrtUint(self.scalar_chip.add_no_carry(ctx, acc, (*x).clone())));
         eval_sum
     }
 
-    pub fn evaluate(&self, ctx: &mut Context<F>, r: ProperCrtUint<F>) -> AssignedValue<F> {
-        let mut eval = self.coeffs[0];
-        let mut power = r;
-        for coeff in self.coeffs.iter().skip(1) {
-            let inter_mul = self.scalar_chip.mul(ctx, coeff, power);
-            eval = self.scalar_chip.add_no_carry(ctx, eval, inter_mul);
-            power = self.scalar_chip.mul_no_carry(ctx, power, r);
+    pub fn evaluate(&self, ctx: &mut Context<F>, r: ProperCrtUint<F>) -> ProperCrtUint<F> {
+        let mut power = r.clone();
+        let mut intermediates: Vec<ProperCrtUint<F>> = Vec::<ProperCrtUint<F>>::new();
+
+        let sf_zero = self.scalar_chip.load_constant(ctx, SF::ZERO);
+
+        for coeff in self.coeffs.iter() {
+            let inter_mul = self.scalar_chip.mul(ctx, coeff, power.clone());
+            intermediates.push(inter_mul);
+
+            let temp_power = self.scalar_chip.mul(ctx, power.clone(), r.clone());
+            power = temp_power;
+
         }
-        eval
+
+
+        intermediates.iter().fold(sf_zero.clone(), |acc, x| bigint::ProperCrtUint(self.scalar_chip.add_no_carry(ctx, acc, (*x).clone())))
     }
 }
 
