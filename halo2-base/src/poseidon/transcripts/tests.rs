@@ -21,13 +21,23 @@ fn transcript_verification<
     let ctx = pool.main();
 
     let mut poseidon_transcript = PoseidonTranscriptChip::<F, T, RATE>::new::<R_F, R_P, 0>(ctx);
+    let mut poseidon_transcript2 = PoseidonTranscriptChip::<F, T, RATE>::new::<R_F, R_P, 0>(ctx);
 
     let absorptions: Vec<Vec<F>> = random_nested_list_f(10, 5);
 
-    for absorption in absorptions {
-        poseidon_transcript.absorb(ctx.assign_witnesses(absorption));
-        poseidon_transcript.squeeze(ctx);
+    for absorption in absorptions.clone() {
+        poseidon_transcript.absorb(ctx.assign_witnesses(absorption.clone()));
+        poseidon_transcript2.absorb(ctx.assign_witnesses(absorption.clone()));
+
+        assert_eq!(poseidon_transcript.squeeze(ctx), poseidon_transcript2.squeeze(ctx));
     }
+
+    for absorption in absorptions.clone() {
+        poseidon_transcript.absorb(ctx.assign_witnesses(absorption.clone()));
+        poseidon_transcript2.absorb(ctx.assign_witnesses(absorption.clone()));
+    }
+
+    assert_eq!(poseidon_transcript.squeeze(ctx), poseidon_transcript2.squeeze(ctx));
 }
 
 fn random_nested_list_f<F: ScalarField>(len: usize, max_sub_len: usize) -> Vec<Vec<F>> {

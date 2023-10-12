@@ -46,7 +46,7 @@ impl<'a, F: BigPrimeField, SF: BigPrimeField> UniPoly<'a, F, SF> {
     }
 
     pub fn evaluate(&self, ctx: &mut Context<F>, r: ProperCrtUint<F>) -> ProperCrtUint<F> {
-        let mut power = r.clone();
+        let mut power = self.scalar_chip.load_constant(ctx, SF::ONE);
         let mut intermediates: Vec<ProperCrtUint<F>> = Vec::<ProperCrtUint<F>>::new();
 
         let sf_zero = self.scalar_chip.load_constant(ctx, SF::ZERO);
@@ -73,6 +73,7 @@ fn verify_sumcheck<F: BigPrimeField, SF: BigPrimeField, const T: usize, const RA
     num_rounds: usize,
     // degree_bound: usize,
     polys: Vec<UniPoly<F, SF>>,
+    rs: Vec<ProperCrtUint<F>>,
     scalar_chip: &FpChip<F, SF>,
     transcript: &mut PoseidonTranscriptChip<F, T, RATE>, // impl PoseidonInstruction<F, TccChip = Self>, // todo: impl instructions
 ) -> (ProperCrtUint<F>, Vec<ProperCrtUint<F>>) {
@@ -88,9 +89,9 @@ fn verify_sumcheck<F: BigPrimeField, SF: BigPrimeField, const T: usize, const RA
 
         // TODO: verify degree bound
         let zero_one_sum = scalar_chip.add_no_carry(ctx, poly.coeffs[0].clone(), eval_one);
-        let valid_sum = scalar_chip.enforce_less_than(ctx, bigint::ProperCrtUint(zero_one_sum));
+        // let valid_sum = scalar_chip.enforce_less_than(ctx, bigint::ProperCrtUint(zero_one_sum));
 
-        let zero_one_eq = scalar_chip.is_equal(ctx, valid_sum, claim.clone());
+        let zero_one_eq = scalar_chip.is_equal(ctx, bigint::ProperCrtUint(zero_one_sum), e.clone());
 
         let native_coeffs = poly.coeffs.iter().map(|u| *u.native()).collect::<Vec<_>>();
         transcript.absorb(native_coeffs);
@@ -100,6 +101,7 @@ fn verify_sumcheck<F: BigPrimeField, SF: BigPrimeField, const T: usize, const RA
 
         let r_i_crt = scalar_chip.load_constant_uint(ctx, r_i.clone());
 
+        scalar_chip.is_equal(ctx, r_i_crt.clone(), rs[i].clone());
         r.push(r_i_crt.clone());
 
         // evaluate the claimed degree-ell polynomial at r_i
