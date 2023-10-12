@@ -9,10 +9,6 @@ use crate::{
 
 use num_bigint::BigUint;
 
-const POSEIDON_STATE_SIZE: usize = 64;
-
-// TODO: write tests, figure out the field stuff, figure out interaction with sumcheck
-
 /// Poseidon circuit transcript
 pub struct PoseidonTranscriptChip<F: ScalarField, const T: usize, const RATE: usize> {
     transcript: PoseidonSponge<F, T, RATE>, 
@@ -43,55 +39,8 @@ impl<F: ScalarField, const T: usize, const RATE: usize> PoseidonTranscriptChip<F
         fe_to_biguint::<F>(squeezed.value())
     }
 
-    // TODO: either use the sponge squeeze, or write the implementation -> try!
 }
 
-// pub trait PoseidonTranscriptInstructions<F: ScalarField> {
-//     fn absorb_field_element(
-//         &mut self,
-//         ctx: &mut Context<F>,
-//         elements: &[AssignedValue<F>],
-//     )
-//     where
-//         F: BigPrimeField;
-// }
-
-// impl<F: ScalarField, const T: usize, const RATE: usize> PoseidonTranscriptInstructions<F>
-//     for PoseidonTranscriptChip<F, T, RATE>
-// {
-//     fn absorb_field_element(
-//         &mut self,
-//         ctx: &mut Context<F>,
-//         elements: &[AssignedValue<F>], // vector of scalar field elements
-//     ) 
-//     where
-//         F: BigPrimeField, 
-//     {
-//         self.transcript.update(elements);
-//     }
-
-//     // pub fn squeeze(
-//     //     &mut self,
-//     //     ctx: &mut Context<F>,
-//     //     gate: &impl GateInstructions<F>,
-//     // ) -> AssignedValue<F> {
-
-//     // fn squeeze_field_element(
-//     //     &self,
-//     //     ctx: &mut Context<F>,
-//     // ) -> AssignedValue<F>
-//     // where
-//     //     F: BigPrimeField, 
-//     // {
-//     //     self.transcript.update(elements);
-//     // }
-
-// }
-
-// fn absorb<T: TranscriptReprTrait<G>>(&mut self, label: &'static [u8], o: &T) {
-//     self.transcript.update(label);
-//     self.transcript.update(&o.to_transcript_bytes());
-//   }
 
 #[cfg(test)]
 mod tests;
