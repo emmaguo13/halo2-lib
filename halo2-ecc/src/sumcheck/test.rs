@@ -87,10 +87,6 @@ pub fn sumcheck_test<F: BigPrimeField>(
     range: &RangeChip<F>,
     params: CircuitParams,
 ) {
-    // todo: potential errors
-    // 1. my sumcheck calculations are not correct
-    // 2. inputs are not correct - 
-    // 3. sumcheck code is not correct
 
     let claim = <Secp256k1Affine as CurveAffine>::ScalarExt::from(12);
     let mut inputs = Vec::<Vec<ProperCrtUint<F>>>::new();
